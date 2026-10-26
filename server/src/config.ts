@@ -26,6 +26,12 @@ function int(name: string, fallback: number): number {
 
 const unsubscribe = optional('UNSUBSCRIBE_MAILTO');
 
+/**
+ * Where the database and uploaded CSVs live. On Vercel the code directory is read-only and only /tmp is
+ * writable, and /tmp is wiped whenever Vercel replaces the instance, so data there is not kept.
+ */
+const DATA_DIR = process.env.VERCEL ? '/tmp' : ROOT;
+
 export const config = {
   mailgun: {
     apiKey: required('MAILGUN_API_KEY'),
@@ -48,7 +54,7 @@ export const config = {
   },
 
   /** Uploaded CSVs are saved here; "Re-import" re-reads every CSV in it. */
-  csvDir: path.resolve(ROOT, optional('CSV_DIR', 'data')),
+  csvDir: path.resolve(DATA_DIR, optional('CSV_DIR', 'data')),
 
   /** Mailgun tag on every email; status polling only looks at this tag. */
   mailTag: optional('CAMPAIGN_TAG', 'mailpost'),
@@ -67,5 +73,5 @@ export const config = {
 
   host: optional('HOST', '127.0.0.1'),
   port: int('PORT', 8080),
-  dbFile: path.resolve(ROOT, optional('DB_FILE', 'mailpost.db')),
+  dbFile: path.resolve(DATA_DIR, optional('DB_FILE', 'mailpost.db')),
 };
