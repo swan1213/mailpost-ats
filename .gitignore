@@ -1,0 +1,7 @@
+node_modules/
+client/dist/
+.env
+*.db
+*.db-*
+data/*.csv
+*.rar
