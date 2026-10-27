@@ -33,4 +33,27 @@ export function estimateDuration(n: number, base: number, randomMax: number): st
   return formatDuration(Math.max(0, n - 1) * averageWait);
 }
 
-export const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
+/** "just now", "4m ago", "3h ago", "2d ago" */
+export function timeAgo(ms: number | null, now = Date.now()): string {
+  if (!ms) return 'never';
+  const s = Math.max(0, Math.round((now - ms) / 1000));
+  if (s < 45) return 'just now';
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+}
+
+/** 950 -> "950", 1200 -> "1.2K", 36909 -> "37K" */
+export function compact(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 10_000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}K`;
+  return `${Math.round(n / 1000)}K`;
+}
+
+/** Emails per hour at this pace (average wait = base + (1 + randomMax) / 2) */
+export function emailsPerHour(base: number, randomMax: number): number {
+  const averageWait = base + (randomMax > 0 ? (1 + randomMax) / 2 : 0);
+  return averageWait > 0 ? 3600 / averageWait : Infinity;
+}
+
+export const plural =(n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;

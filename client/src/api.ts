@@ -54,6 +54,24 @@ export interface Upload {
   uploaded_at: number;
   total: number;
   sent: number;
+  delivered: number;
+  /** Not emailed yet and would really be sent */
+  unsent: number;
+}
+
+export interface Overview {
+  /** Last 14 days, oldest first; day is YYYY-MM-DD in the server's time zone */
+  days: { day: string; sent: number; delivered: number; opened: number }[];
+  recent: { id: string; event: string; ts: number; detail: string | null; messageId: number; email: string; name: string }[];
+}
+
+export interface TemplatePreview {
+  subject: string;
+  html: string;
+  filledFor: string;
+  /** Recipients whose CSV row has no subject, so they get the template */
+  recipients: number;
+  unsent: number;
 }
 
 export interface MailEvent {
@@ -161,4 +179,6 @@ export const api = {
   sendTest: (messageId: number) => send<{ to: string; basedOn: string }>('POST', '/test', { messageId }),
   sendTemplateTest: () => send<{ to: string; filledFor: string }>('POST', '/test/template'),
   pollEvents: () => send<{ fetched: number; applied: number }>('POST', '/events/poll'),
+  overview: () => request<Overview>('/overview'),
+  templatePreview: (subject: string, body: string) => send<TemplatePreview>('POST', '/template/preview', { subject, body }),
 };

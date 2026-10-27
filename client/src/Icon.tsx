@@ -27,6 +27,13 @@ const PATHS = {
   eye: 'M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Zm10 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z',
   alert: 'M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z',
   hourglass: 'M6 2h12M6 22h12M7 2v4l5 6-5 6v4m10-20v4l-5 6 5 6v4',
+  grid: 'M4 4h6v6H4zm10 0h6v6h-6zM4 14h6v6H4zm10 0h6v6h-6z',
+  fileText: 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Zm0 0v5h5M9 13h6m-6 4h6m-6-8h1',
+  file: 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Zm0 0v5h5',
+  arrowRight: 'M5 12h14m-6-6 6 6-6 6',
+  zap: 'M13 2 4 14h7l-1 8 9-12h-7l1-8Z',
+  table: 'M3 5h18v14H3zm0 5h18M3 15h18M9 5v14',
+  barChart: 'M5 20V10m7 10V4m7 16v-7M3 20h18',
 } as const;
 
 export type IconName = keyof typeof PATHS;

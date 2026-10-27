@@ -60,15 +60,85 @@ app.put('/api/settings', (req, res) => {
 });
 
 app.get('/api/uploads', (_req, res) => {
+  // "messages" is joined without an alias because SENDABLE_SQL refers to messages.email / messages.id.
   res.json(
     db
       .prepare(
-        `SELECT u.id, u.filename, u.uploaded_at, COUNT(m.id) AS total, COALESCE(SUM(m.sent_at IS NOT NULL), 0) AS sent
-         FROM uploads u LEFT JOIN messages m ON m.upload_id = u.id
-         GROUP BY u.id ORDER BY u.filename`,
+        `SELECT u.id, u.filename, u.uploaded_at, COUNT(messages.id) AS total,
+           COALESCE(SUM(messages.sent_at IS NOT NULL), 0) AS sent,
+           COALESCE(SUM(messages.status = 'delivered'), 0) AS delivered,
+           COALESCE(SUM(${SENDABLE_SQL}), 0) AS unsent
+         FROM uploads u LEFT JOIN messages ON messages.upload_id = u.id
+         GROUP BY u.id ORDER BY u.uploaded_at DESC`,
       )
       .all(),
   );
+});
+
+const DAY_MS = 86_400_000;
+const localDay = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/** Overview page: sent / delivered / opened per day for the last 14 days, and the latest Mailgun events. */
+app.get('/api/overview', (_req, res) => {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setTime(start.getTime() - 13 * DAY_MS);
+  const perDay = (column: string) =>
+    new Map(
+      (
+        db
+          .prepare(
+            `SELECT date(${column} / 1000, 'unixepoch', 'localtime') AS day, COUNT(*) AS n
+             FROM messages WHERE ${column} >= ? GROUP BY day`,
+          )
+          .all(start.getTime()) as { day: string; n: number }[]
+      ).map((r) => [r.day, r.n]),
+    );
+  const sent = perDay('sent_at');
+  const delivered = perDay('delivered_at');
+  const opened = perDay('opened_at');
+  const days = Array.from({ length: 14 }, (_, i) => {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    const day = localDay(d);
+    return { day, sent: sent.get(day) ?? 0, delivered: delivered.get(day) ?? 0, opened: opened.get(day) ?? 0 };
+  });
+
+  const recent = db
+    .prepare(
+      `SELECT e.id, e.event, e.ts, e.detail, m.id AS messageId, m.email, m.name
+       FROM events e JOIN messages m ON m.id = e.message_id
+       WHERE e.event IN ('delivered', 'opened', 'clicked', 'failed')
+       ORDER BY e.ts DESC LIMIT 12`,
+    )
+    .all();
+
+  res.json({ days, recent });
+});
+
+/** Template page: the template as typed (not saved yet), rendered for a real recipient who would get it. */
+app.post('/api/template/preview', (req, res) => {
+  const subject = String(req.body?.subject ?? '');
+  const body = String(req.body?.body ?? '');
+  const usesTemplate = "TRIM(csv_subject) = '' AND status <> 'skipped'";
+  const sample = (db.prepare(`SELECT * FROM messages WHERE ${usesTemplate} ORDER BY id LIMIT 1`).get() as MessageRow | undefined) ?? {
+    name: 'Alex',
+    email: 'alex@example.com',
+    location: '',
+  };
+  const mail = render(
+    { name: sample.name, email: sample.email, location: sample.location, csv_subject: '', csv_content: '' },
+    { ...getSettings(), templateSubject: subject, templateBody: body },
+  );
+  const count = (where: string) => (db.prepare(`SELECT COUNT(*) AS n FROM messages WHERE ${where}`).get() as { n: number }).n;
+  res.json({
+    subject: mail.subject,
+    html: emailHtml(mail.subject, mail.body),
+    filledFor: sample.name || sample.email,
+    recipients: count(usesTemplate),
+    unsent: count(`${usesTemplate} AND ${SENDABLE_SQL}`),
+  });
 });
 
 /** Body: the raw CSV text (Content-Type text/csv); ?filename=list.csv. Raw text, because the main CSV is ~46 MB. */
