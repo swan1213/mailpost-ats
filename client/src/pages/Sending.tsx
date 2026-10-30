@@ -183,6 +183,23 @@ export function SendingPage({ ctx }: { ctx: Ctx }) {
               <dd>An address is never emailed twice, even if it is in several files</dd>
             </div>
             <div>
+              <dt>Desktop alert</dt>
+              <dd>
+                {state.desktopNotifications
+                  ? 'A Windows notification appears on the server PC whenever sending pauses'
+                  : 'Off (the server is not running on Windows, or DESKTOP_NOTIFICATIONS=0)'}
+                {state.desktopNotifications && (
+                  <button
+                    className="link-btn inline"
+                    disabled={busy}
+                    onClick={() => run(async () => (await api.testNotification(), 'Test notification shown on the server PC.'))}
+                  >
+                    Test
+                  </button>
+                )}
+              </dd>
+            </div>
+            <div>
               <dt>Mailgun status sync</dt>
               <dd>
                 Every {events.intervalSeconds}s · last {timeAgo(events.polledAt, clock)}

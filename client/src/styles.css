@@ -89,11 +89,14 @@ a { color: inherit; text-decoration: none; }
 .error-text { color: var(--bad); }
 .spacer { flex: 1; }
 .clamp1 { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 0; }
-.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.sr-only { position: absolute; left: 0; top: 0; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .mobile-only, .topbar .brand-mark.mobile-only { display: none; }
 
 /* ---- Shell: sidebar + main ---------------------------------------------- */
-.shell { display: grid; grid-template-columns: var(--sidebar-w) minmax(0, 1fr); min-height: 100vh; }
+/* overflow-x: clip (not hidden) so nothing can make the whole page scroll sideways, while sticky bars keep working. */
+.shell { display: grid; grid-template-columns: var(--sidebar-w) minmax(0, 1fr); min-height: 100vh; overflow-x: clip; }
+/* Scroll areas are positioned so absolutely placed children (e.g. .sr-only labels) stay inside them. */
+.table-wrap, .table-scroll, .tabs, .choices, .drawer-body { position: relative; }
 .sidebar {
   position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: 6px;
   padding: 18px 14px; background: var(--sidebar); border-right: 1px solid var(--border);
@@ -291,7 +294,8 @@ input[type='checkbox']:disabled, input[type='radio']:disabled { cursor: not-allo
 .chart-tip strong { font-size: 12px; }
 .chart-tip .key { display: inline-block; width: 8px; height: 8px; border-radius: 2px; background: var(--accent); margin-right: 2px; }
 .chart-x { display: flex; margin: 8px 0 0 40px; }
-.chart-x span { flex: 1; text-align: center; font-size: 11px; color: var(--muted); white-space: nowrap; }
+/* min-width: 0 lets the 14 labels share the width; hidden ones keep their slot so the rest stay under their column. */
+.chart-x span { flex: 1 1 0; min-width: 0; text-align: center; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: visible; }
 .chart-loading { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 240px; color: var(--muted); font-size: 13px; }
 .table-scroll { max-height: 266px; overflow: auto; }
 .mini-table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -629,6 +633,8 @@ td.sent { white-space: nowrap; font-size: 12.5px; color: var(--text-2); font-var
   .card-head { padding: 16px 16px 0; }
   .card-body { padding: 14px 16px 16px; }
   .chart-plot { height: 190px; }
+  .chart-x span.odd { visibility: visible; }
+  .chart-x span:not(.third) { visibility: hidden; }
   .hero { padding: 20px 18px; }
   .hero-title { font-size: 20px; }
   .hero-actions { width: 100%; min-width: 0; }

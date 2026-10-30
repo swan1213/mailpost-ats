@@ -322,7 +322,7 @@ function SendsChart({ days }: { days: Overview['days'] | null }) {
             </div>
             <div className="chart-x" aria-hidden="true">
               {days.map((d, i) => (
-                <span key={d.day} className={i % 2 ? 'odd' : ''}>
+                <span key={d.day} className={`${i % 2 ? 'odd' : ''} ${i % 3 === 0 ? 'third' : ''}`}>
                   {dayLabel(d.day, { month: 'short', day: 'numeric' })}
                 </span>
               ))}

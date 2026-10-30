@@ -116,6 +116,8 @@ export interface AppState {
   counts: Record<'total' | 'sent' | 'unsent' | 'queued' | 'delivered' | 'opened' | 'failed', number>;
   settings: Settings;
   limits: { from: string; dailyLimit: number; maxAttempts: number; sentToday: number };
+  /** The server shows a Windows notification when sending pauses */
+  desktopNotifications: boolean;
 }
 
 export interface ImportResult {
@@ -180,5 +182,6 @@ export const api = {
   sendTemplateTest: () => send<{ to: string; filledFor: string }>('POST', '/test/template'),
   pollEvents: () => send<{ fetched: number; applied: number }>('POST', '/events/poll'),
   overview: () => request<Overview>('/overview'),
+  testNotification: () => send<{ ok: true }>('POST', '/notify/test'),
   templatePreview: (subject: string, body: string) => send<TemplatePreview>('POST', '/template/preview', { subject, body }),
 };

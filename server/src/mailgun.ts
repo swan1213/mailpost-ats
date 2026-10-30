@@ -29,9 +29,17 @@ async function request(url: string, init: RequestInit = {}): Promise<unknown> {
   if (!res.ok) {
     let detail = text.slice(0, 300);
     try {
-      detail = (JSON.parse(text) as { message?: string }).message ?? detail;
+      const body = JSON.parse(text) as { message?: string; Error?: string };
+      detail = body.message ?? body.Error ?? detail;
     } catch {
       // not JSON; keep the raw text
+    }
+    // 401 means Mailgun refused the API key itself (wrong, deleted or disabled), which only the account owner can fix.
+    if (res.status === 401) {
+      throw new MailgunError(
+        `Mailgun rejected the API key (401: ${detail}). It may be disabled or wrong: check the Mailgun dashboard, put a working key in MAILGUN_API_KEY, restart the server, then Resume`,
+        401,
+      );
     }
     throw new MailgunError(`Mailgun ${res.status}: ${detail}`, res.status);
   }

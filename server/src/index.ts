@@ -18,6 +18,7 @@ import {
 import { emailHtml } from './emailHtml.js';
 import { eventsStatus, pollEvents, startEventPoller } from './events.js';
 import { reimportFolder, saveAndImport } from './importer.js';
+import { desktopNotificationsAvailable, notifyDesktop } from './notify.js';
 import { engineStatus, queueMessages, resume, resumeOnBoot, sendTemplateTest, sendTest, sentToday, stop } from './sender.js';
 import { getSettings, render, updateSettings, ValidationError } from './settings.js';
 
@@ -52,6 +53,7 @@ app.get('/api/state', (_req, res) => {
     },
     settings: getSettings(),
     limits: { from: config.mailFrom, dailyLimit: config.dailyLimit, maxAttempts: config.maxAttempts, sentToday: sentToday() },
+    desktopNotifications: desktopNotificationsAvailable(),
   });
 });
 
@@ -267,6 +269,13 @@ app.post('/api/test/template', async (_req, res) => {
 
 app.post('/api/events/poll', async (_req, res) => {
   res.json(await pollEvents());
+});
+
+/** Shows a sample "sending paused" notification on the server's Windows desktop. */
+app.post('/api/notify/test', async (_req, res) => {
+  if (!desktopNotificationsAvailable()) throw new ValidationError('Windows notifications are off (the server is not on Windows, or DESKTOP_NOTIFICATIONS=0)');
+  await notifyDesktop('MailPost: test notification', 'This is how MailPost tells you when sending pauses. Click to open the dashboard.');
+  res.json({ ok: true });
 });
 
 // Serve the built dashboard (npm run build) from the same port.

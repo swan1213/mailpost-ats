@@ -74,4 +74,9 @@ export const config = {
   host: optional('HOST', '127.0.0.1'),
   port: int('PORT', 8080),
   dbFile: path.resolve(DATA_DIR, optional('DB_FILE', 'mailpost.db')),
+
+  /** Windows toast when sending pauses (only where the server runs on Windows). Set to 0 to turn off. */
+  desktopNotifications: optional('DESKTOP_NOTIFICATIONS', '1') !== '0',
+  /** Opened when the notification is clicked. */
+  dashboardUrl: optional('DASHBOARD_URL', `http://${['0.0.0.0', '::'].includes(optional('HOST', '127.0.0.1')) ? '127.0.0.1' : optional('HOST', '127.0.0.1')}:${int('PORT', 8080)}`),
 };

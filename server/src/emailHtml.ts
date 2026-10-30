@@ -114,7 +114,7 @@ function preheader(text: string): string {
 function header(): string {
   const { name, url, logoUrl, location } = config.brand;
   return `
-      <tr><td bgcolor="${C.navy}" style="background-color:${C.navy};background-image:linear-gradient(135deg,#14233f 0%,${C.navyDeep} 100%);padding:26px 36px;">
+      <tr><td bgcolor="${C.navy}" style="background-color:${C.navy};background-image:linear-gradient(135deg,#14233f 0%,${C.navyDeep} 100%);padding:26px 36px;" class="mp-pad">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
           <tr>
             <td valign="middle">
@@ -128,7 +128,7 @@ function header(): string {
                 </tr></table>
               </a>
             </td>
-            <td valign="middle" align="right" style="${FONT}font-size:11px;letter-spacing:2px;text-transform:uppercase;color:${C.onNavyMuted};white-space:nowrap;">${esc(location)}</td>
+            <td valign="middle" align="right" style="${FONT}font-size:11px;letter-spacing:2px;text-transform:uppercase;color:${C.onNavyMuted};white-space:nowrap;" class="mp-hide">${esc(location)}</td>
           </tr>
         </table>
       </td></tr>
@@ -145,7 +145,7 @@ function pillars(): string {
           </td>`,
   ).join('');
   return `
-      <tr><td style="padding:0 36px 32px;">
+      <tr><td style="padding:0 36px 32px;" class="mp-pad">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.soft}" style="background-color:${C.soft};border:1px solid ${C.line};border-radius:10px;border-collapse:separate;">
           <tr>${cells}
           </tr>
@@ -164,7 +164,7 @@ function footer(): string {
        <a href="${esc(config.unsubscribeMailto)}?subject=unsubscribe" style="color:${C.onNavy};text-decoration:underline;">unsubscribe here</a>.`
     : '';
   return `
-      <tr><td bgcolor="${C.navy}" style="${FONT}background-color:${C.navy};padding:26px 36px 28px;color:${C.onNavy};font-size:12px;line-height:1.7;">
+      <tr><td bgcolor="${C.navy}" style="${FONT}background-color:${C.navy};padding:26px 36px 28px;color:${C.onNavy};font-size:12px;line-height:1.7;" class="mp-pad">
         <div style="font-size:14px;font-weight:700;color:#ffffff;">${esc(name)}</div>
         <div style="color:${C.onNavy};">Software engineering, AI automation &amp; partnership, built in ${esc(location.split(',')[0])}.</div>
         <div style="color:${C.onNavyMuted};margin-top:8px;">${esc(SERVICES)}</div>
@@ -184,6 +184,13 @@ export function emailHtml(subject: string, text: string): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light only">
 <meta name="supported-color-schemes" content="light">
+<style>
+  /* Phones: narrower side padding, and the location line (also in the footer) is dropped from the header. */
+  @media only screen and (max-width: 520px) {
+    .mp-pad { padding-left: 20px !important; padding-right: 20px !important; }
+    .mp-hide { display: none !important; }
+  }
+</style>
 <title>${esc(subject)}</title>
 </head>
 <body style="margin:0;padding:0;background:${C.page};">
@@ -192,7 +199,7 @@ export function emailHtml(subject: string, text: string): string {
   <tr><td align="center" style="padding:32px 12px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:620px;background:#ffffff;border-radius:14px;border-collapse:separate;overflow:hidden;box-shadow:0 2px 10px rgba(15,23,42,.06);">
       ${header()}
-      <tr><td style="${FONT}padding:34px 36px 12px;font-size:15px;line-height:1.7;color:${C.text};">
+      <tr><td style="${FONT}padding:34px 36px 12px;font-size:15px;line-height:1.7;color:${C.text};" class="mp-pad">
         ${renderBody(text)}
       </td></tr>
       ${pillars()}

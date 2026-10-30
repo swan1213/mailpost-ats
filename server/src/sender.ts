@@ -12,6 +12,7 @@ import {
   type MessageRow,
 } from './db.js';
 import { MailgunError, sendMail } from './mailgun.js';
+import { notifyDesktop } from './notify.js';
 import { getSettings, render, ValidationError } from './settings.js';
 
 /** idle = nothing queued · running = working through the queue · paused = stopped by an error, queue kept */
@@ -93,6 +94,11 @@ function pause(reason: string) {
   state = 'paused';
   kvSet(RUNNING_KEY, '0');
   lastError = reason;
+  // Pauses only happen on errors that need a person, so tell them even if the dashboard isn't open.
+  const waiting = (db.prepare("SELECT COUNT(*) AS n FROM messages WHERE status = 'queued'").get() as { n: number }).n;
+  notifyDesktop('MailPost: sending paused', `${waiting.toLocaleString()} emails are waiting. ${reason.replace(/^Paused: /, '')}`).catch(
+    () => {}, // already logged; a missing notification must never break sending
+  );
 }
 
 /**
