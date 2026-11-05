@@ -1,6 +1,7 @@
 import { config } from './config.js';
 import {
   db,
+  EMAILED_ELSEWHERE_SQL,
   filterSql,
   getMessage,
   kvGet,
@@ -11,9 +12,10 @@ import {
   type MessageFilter,
   type MessageRow,
 } from './db.js';
-import { MailgunError, sendMail } from './mailgun.js';
+import { classify, sendMail } from './ses.js';
 import { notifyDesktop } from './notify.js';
-import { getSettings, render, ValidationError } from './settings.js';
+import { safetyProblem } from './health.js';
+import { dailyCap, getSettings, render, ValidationError } from './settings.js';
 
 /** idle = nothing queued · running = working through the queue · paused = stopped by an error, queue kept */
 export type EngineState = 'idle' | 'running' | 'paused';
@@ -132,14 +134,12 @@ export function queueMessages(target: { ids?: number[]; filter?: MessageFilter }
     // The same address can be in several CSVs. Skip it if another row already emailed it (or is about to),
     // so nobody gets the email twice. Bounced addresses count as emailed, so they aren't retried either.
     const emailOf = db.prepare('SELECT email FROM messages WHERE id = ?');
-    const taken = db.prepare(
-      `SELECT 1 FROM messages WHERE email = ? AND id <> ? AND (sent_at IS NOT NULL OR status IN ('queued', 'sending')) LIMIT 1`,
-    );
+    // The event history counts too: an address that was emailed, reported spam or unsubscribed is never queued again.
+    const taken = db.prepare(`SELECT 1 FROM messages WHERE id = ? AND ${EMAILED_ELSEWHERE_SQL}`);
     const t = now();
     let count = 0;
     for (const id of candidates) {
-      const row = emailOf.get(id) as { email: string } | undefined;
-      if (!row || taken.get(row.email, id)) continue;
+      if (!emailOf.get(id) || taken.get(id)) continue;
       count += Number(stmt.run(t, t, id).changes);
     }
     return count;
@@ -188,7 +188,7 @@ export function resume() {
   run();
 }
 
-/** How long to wait before retrying when Mailgun is unreachable or overloaded. */
+/** How long to wait before retrying when SES is unreachable or failing. */
 const BACKOFF_MS = 5 * 60_000;
 
 /**
@@ -227,12 +227,41 @@ async function tick() {
   }
 }
 
+/** Why this address must not be emailed (again), or null if it may be. */
+function neverAgainReason(row: MessageRow): string | null {
+  const hit = db
+    .prepare(
+      `SELECT e.event, e.ts FROM messages o JOIN events e ON e.message_id = o.id
+       WHERE o.email = ? AND e.event IN ('accepted', 'complained', 'unsubscribed')
+       ORDER BY CASE e.event WHEN 'complained' THEN 0 WHEN 'unsubscribed' THEN 1 ELSE 2 END, e.ts LIMIT 1`,
+    )
+    .get(row.email) as { event: string; ts: number } | undefined;
+  const day = (ts: number) => new Date(ts).toLocaleDateString();
+  if (hit?.event === 'complained') return `Not sent: this person reported an earlier email as spam (${day(hit.ts)})`;
+  if (hit?.event === 'unsubscribed') return `Not sent: this person unsubscribed (${day(hit.ts)})`;
+  if (hit) return `Not sent: this address was already emailed on ${day(hit.ts)}`;
+  const other = db
+    .prepare('SELECT sent_at FROM messages WHERE email = ? AND id <> ? AND sent_at IS NOT NULL ORDER BY sent_at LIMIT 1')
+    .get(row.email, row.id) as { sent_at: number } | undefined;
+  return other ? `Not sent: this address was already emailed on ${day(other.sent_at)} from another file` : null;
+}
+
 async function sendNext() {
-  if (config.dailyLimit > 0 && sentToday() >= config.dailyLimit) {
+  const cap = dailyCap();
+  if (cap.limit > 0 && sentToday() >= cap.limit) {
     const tomorrow = startOfToday();
     tomorrow.setDate(tomorrow.getDate() + 1);
-    lastError = `Daily limit of ${config.dailyLimit} reached. Continuing tomorrow.`;
-    schedule(tomorrow.getTime() - Date.now());
+    const what = cap.warmupDay && !cap.warmupDone ? `Warm-up day ${cap.warmupDay} limit of ${cap.limit.toLocaleString()}` : `Daily limit of ${cap.limit.toLocaleString()}`;
+    lastError = `${what} reached. Continuing tomorrow.`;
+    // Wake up at midnight, or within 10 minutes if the limit is raised in the dashboard meanwhile.
+    schedule(Math.min(tomorrow.getTime() - Date.now(), 10 * 60_000));
+    return;
+  }
+
+  // Protect the sender reputation: stop before SES (or Gmail) does it for us.
+  const unsafe = safetyProblem(getSettings());
+  if (unsafe) {
+    pause(unsafe);
     return;
   }
 
@@ -245,61 +274,82 @@ async function sendNext() {
     return;
   }
 
+  // Last check before sending: never email someone twice, or after they reported spam or unsubscribed.
+  const why = neverAgainReason(row);
+  if (why) {
+    db.prepare("UPDATE messages SET status = 'skipped', queued_at = NULL, last_error = ?, updated_at = ? WHERE id = ?").run(why, now(), row.id);
+    updateRun((r) => r.total--);
+    schedule(0);
+    return;
+  }
+
   const settings = getSettings();
 
   db.prepare("UPDATE messages SET status = 'sending', updated_at = ? WHERE id = ?").run(now(), row.id);
   try {
     const mail = render(row, settings);
-    const mailgunId = await sendMail({
+    const providerId = await sendMail({
       to: row.email,
       name: row.name,
       subject: mail.subject,
       text: mail.body,
       tag: config.mailTag,
-      variables: { mailpost_id: String(row.id) },
+      style: settings.emailStyle,
     });
     db.prepare(
-      `UPDATE messages SET status = 'sent', mailgun_id = ?, sent_subject = ?, sent_body = ?, sent_at = ?,
+      `UPDATE messages SET status = 'sent', provider_id = ?, sent_subject = ?, sent_body = ?, sent_at = ?,
          attempts = attempts + 1, last_error = NULL, updated_at = ? WHERE id = ?`,
-    ).run(mailgunId, mail.subject, mail.body, now(), now(), row.id);
+    ).run(providerId, mail.subject, mail.body, now(), now(), row.id);
     updateRun((r) => r.ok++);
-    // A send went through, so an earlier "daily limit" or "Mailgun unreachable" message no longer applies.
+    // A send went through, so an earlier "daily limit" or "SES unreachable" message no longer applies.
     if (state === 'running') lastError = null;
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const failure = classify(err);
+    const message = failure.message;
 
-    // Accounts on probation get a 403 "limited to 100 messages / hour ... enabled in 1020 seconds".
-    // That is a rate limit, not a bad key: wait as long as Mailgun says, then carry on by itself.
-    const enabledIn = err instanceof MailgunError && err.status === 403 ? Number(/enabled in (\d+) seconds/i.exec(message)?.[1]) : NaN;
-    if (enabledIn > 0) {
-      putBack(row.id, message);
-      if (state === 'running') backOff(message, (enabledIn + 30) * 1000);
-      return;
-    }
-
-    // Bad API key / domain: every send would fail the same way, so stop instead of burning attempts.
-    if (err instanceof MailgunError && [401, 403, 404].includes(err.status)) {
-      putBack(row.id, message);
-      if (state === 'running') pause(`Paused: ${message}`);
-      return;
-    }
-
-    // Mailgun unreachable or overloaded: wait and retry this same email without using up its attempts,
-    // so a network outage doesn't mark the whole queue as failed one row after another.
-    if (err instanceof MailgunError && (err.status === 0 || err.status === 429 || err.status >= 500)) {
-      putBack(row.id, message);
-      if (state === 'running') backOff(message, BACKOFF_MS);
-      return;
-    }
-
-    const attempts = row.attempts + 1;
-    if (attempts >= config.maxAttempts) {
-      db.prepare(
-        "UPDATE messages SET status = 'failed', attempts = ?, last_error = ?, failed_at = ?, updated_at = ? WHERE id = ?",
-      ).run(attempts, message, now(), now(), row.id);
-      updateRun((r) => r.fail++);
-    } else {
-      putBack(row.id, message, attempts);
+    switch (failure.kind) {
+      // Send rate or daily quota: nothing was sent, so wait and retry the same email.
+      case 'throttle':
+        putBack(row.id, message);
+        if (state === 'running') backOff(message, failure.waitMs ?? 60_000);
+        return;
+      // Credentials, permissions, suspended/paused account, sandbox, unverified sender: every send would fail
+      // the same way, so stop instead of burning attempts (and the desktop alert tells someone).
+      case 'account':
+        putBack(row.id, message);
+        if (state === 'running') pause(`Paused: ${message}`);
+        return;
+      // SES failed or couldn't be reached: wait and retry without using up attempts, so an outage doesn't
+      // mark the whole queue as failed one row after another.
+      case 'outage':
+        putBack(row.id, message);
+        if (state === 'running') backOff(message, BACKOFF_MS);
+        return;
+      // The request may have reached SES. SES has no duplicate protection, so retrying could email this person
+      // twice: mark it for a manual check instead and carry on with the next email.
+      case 'unclear':
+        db.prepare(
+          "UPDATE messages SET status = 'failed', attempts = attempts + 1, last_error = ?, failed_at = ?, updated_at = ? WHERE id = ?",
+        ).run(
+          `${message}. SES may or may not have sent it, so it was not retried automatically (that could email them twice). Check the SES console or ask the recipient, then send it again by hand if needed.`,
+          now(),
+          now(),
+          row.id,
+        );
+        updateRun((r) => r.fail++);
+        break;
+      // This email was refused (bad address or content): a failed try.
+      case 'message': {
+        const attempts = row.attempts + 1;
+        if (attempts >= config.maxAttempts) {
+          db.prepare(
+            "UPDATE messages SET status = 'failed', attempts = ?, last_error = ?, failed_at = ?, updated_at = ? WHERE id = ?",
+          ).run(attempts, message, now(), now(), row.id);
+          updateRun((r) => r.fail++);
+        } else {
+          putBack(row.id, message, attempts);
+        }
+      }
     }
   }
 
@@ -323,6 +373,7 @@ export async function sendTest(messageId: number) {
     subject: `[TEST] ${mail.subject}`,
     text: mail.body,
     tag: `${config.mailTag}-test`,
+    style: settings.emailStyle,
   });
   return { to: settings.testEmail, basedOn: row.email };
 }
@@ -344,6 +395,7 @@ export async function sendTemplateTest() {
     subject: `[TEST] ${mail.subject}`,
     text: mail.body,
     tag: `${config.mailTag}-test`,
+    style: settings.emailStyle,
   });
   return { to: settings.testEmail, filledFor: sample.name || sample.email };
 }

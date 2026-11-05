@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { api, type AppState, type Upload } from './api';
 import { useConfirm } from './ConfirmDialog';
-import { plural, timeAgo } from './format';
+import { plural } from './format';
 import { Icon, ThemeToggle } from './Icon';
 import { FilesPage } from './pages/Files';
 import { OverviewPage } from './pages/Overview';
@@ -133,7 +133,7 @@ export default function App() {
       refresh,
       openStart: (uploadId = null) => setStartFor({ uploadId }),
       pickFile: () => fileInput.current?.click(),
-      resume: () => run(async () => (await api.resume(), 'Sending resumed.')),
+      resume: () => run(async () => (await api.resume(), 'Sending has resumed.')),
       stopSending: async () => {
         const paused = engine.state === 'paused';
         const ok = await confirm({
@@ -142,13 +142,13 @@ export default function App() {
           danger: true,
           body: (
             <p>
-              {plural(counts.queued, 'queued email')} go back to Unsent. You can start again at any time.
-              {engine.sending && ' The email being sent right now still finishes.'}
+              {plural(counts.queued, 'queued email')} will go back to "not emailed", and you can start again whenever you like.
+              {engine.sending && ' The email going out right now will still finish.'}
             </p>
           ),
         });
         if (!ok) return;
-        await run(async () => `Stopped. ${plural((await api.stop()).cancelled, 'email')} went back to Unsent.`);
+        await run(async () => `Stopped. ${plural((await api.stop()).cancelled, 'email')} went back to "not emailed".`);
       },
     };
   }, [state, uploads, busy, clock, route.params, run, toast, confirm, navigate, setLeaveGuard, refresh]);
@@ -164,7 +164,7 @@ export default function App() {
         {loadError ? (
           <div className="callout error">
             <Icon name="alert" />
-            <span>Cannot reach the server: {loadError}</span>
+            <span>Can't reach the server: {loadError}</span>
           </div>
         ) : (
           <div className="boot-loading">
@@ -177,6 +177,14 @@ export default function App() {
   }
 
   const engine = engineSummary(state, clock);
+  const p = state.provider;
+  const sesProblem = p.error || p.setup.error || state.events.error;
+  const sesTone = sesProblem ? 'bad' : p.account && !p.account.production ? 'warn' : p.account ? 'good' : 'idle';
+  const sesLabel = sesProblem
+    ? 'Needs attention'
+    : p.account
+      ? `${p.account.production ? 'Production' : 'Sandbox'} · ${p.region}`
+      : `Connecting · ${p.region}`;
   const current = NAV.find((n) => n.page === route.page) ?? NAV[0];
   const badge = (page: PageName) =>
     page === 'sending' && engine.inFlight ? (
@@ -235,16 +243,20 @@ export default function App() {
           {NAV.map((n) => navLink(n, 'nav-item'))}
         </nav>
         <div className="sidebar-foot">
-          <div className="foot-row">
-            <span className="foot-label">Sender</span>
-            <span className="foot-value" title={state.limits.from}>
-              {state.limits.from}
+          <button className="foot-status" onClick={() => navigate('sending')} title="Open the Amazon SES details on the Sending page">
+            <span className={`foot-dot ${sesTone}`} />
+            <span className="foot-text">
+              <span className="foot-value">Amazon SES</span>
+              <span className="foot-label">{sesLabel}</span>
             </span>
-          </div>
+          </button>
           <div className="foot-row">
-            <span className="foot-label">Mailgun sync</span>
-            <span className={`foot-value ${state.events.error ? 'error-text' : ''}`} title={state.events.error ?? undefined}>
-              {state.events.error ? 'Problem' : timeAgo(state.events.polledAt, clock)}
+            <span className="foot-label">Sending as</span>
+            <span className="foot-value" title={state.limits.from}>
+              {state.limits.from.replace(/\s*<.*>$/, '') || state.limits.from}
+            </span>
+            <span className="foot-label clamp1" title={state.limits.from}>
+              {state.limits.from.match(/<(.+)>/)?.[1] ?? ''}
             </span>
           </div>
         </div>
@@ -265,15 +277,11 @@ export default function App() {
             <button
               className={`engine-chip ${engine.tone}`}
               onClick={() => navigate('sending')}
-              title={`${engine.activity} · open Sending`}
+              title={`${engine.activity}. Click to open Sending.`}
             >
               <span className="dot" />
               <span>{engine.label}</span>
-              {engine.inFlight && engine.run && (
-                <span className="engine-progress">
-                  {engine.done.toLocaleString()}/{engine.run.total.toLocaleString()}
-                </span>
-              )}
+              {engine.inFlight && <span className="engine-progress">{engine.remaining.toLocaleString()} waiting</span>}
             </button>
             <ThemeToggle />
           </div>
@@ -282,7 +290,7 @@ export default function App() {
         {loadError && (
           <div className="callout error page-alert">
             <Icon name="alert" />
-            <span>Lost connection to the server ({loadError}). Retrying…</span>
+            <span>Lost the connection to the server ({loadError}). Trying again…</span>
           </div>
         )}
 
@@ -322,7 +330,7 @@ export default function App() {
         <div className="drop-hint">
           <Icon name="upload" size={28} />
           Drop the CSV to upload it
-          <span className="drop-sub">It needs an "email" column. Nothing is sent until you start sending.</span>
+          <span className="drop-sub">It needs an "email" column. Nothing is sent until you press Start.</span>
         </div>
       )}
       {confirmDialog}

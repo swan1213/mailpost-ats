@@ -52,13 +52,13 @@ export function StartDialog({ state, uploads, initialUploadId, onCancel, onConfi
         <p className="muted small">Who should get the email? Addresses already emailed from another file are skipped automatically.</p>
 
         <div className="choices">
-          {option(null, 'Everyone not emailed yet', `Across all ${plural(uploads.length, 'file')}`, counts.unsent)}
+          {option(null, "Everyone who hasn't been emailed", `From all ${plural(uploads.length, 'file')}`, counts.unsent)}
           {perFile && files.map((f) => option(f.id, f.filename, `${f.sent.toLocaleString()} of ${f.total.toLocaleString()} already sent`, f.unsent))}
         </div>
 
         <dl className="summary">
           <div>
-            <dt>Sender</dt>
+            <dt>From</dt>
             <dd>{limits.from}</dd>
           </div>
           <div>
@@ -74,14 +74,16 @@ export function StartDialog({ state, uploads, initialUploadId, onCancel, onConfi
             <dt>Estimated time</dt>
             <dd>{count <= 1 ? 'under a minute' : `about ${estimateDuration(count, settings.delaySeconds, settings.delayRandomMax)}`}</dd>
           </div>
-          {limits.dailyLimit > 0 && (
+          {limits.limit > 0 && (
             <div>
-              <dt>Daily limit</dt>
-              <dd>{limits.dailyLimit.toLocaleString()} per day, then continues the next day</dd>
+              <dt>{limits.warmupDay && !limits.warmupDone ? 'Warm-up limit' : 'Daily limit'}</dt>
+              <dd>
+                {limits.limit.toLocaleString()} today ({limits.sentToday.toLocaleString()} sent so far), then continues the next day
+              </dd>
             </div>
           )}
         </dl>
-        {inFlight && <p className="dialog-note">These join the run that is already in progress.</p>}
+        {inFlight && <p className="dialog-note">They'll be added to the run that's already going.</p>}
 
         <div className="dialog-actions">
           <button className="btn" onClick={onCancel}>

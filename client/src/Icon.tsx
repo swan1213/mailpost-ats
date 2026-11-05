@@ -34,6 +34,8 @@ const PATHS = {
   zap: 'M13 2 4 14h7l-1 8 9-12h-7l1-8Z',
   table: 'M3 5h18v14H3zm0 5h18M3 15h18M9 5v14',
   barChart: 'M5 20V10m7 10V4m7 16v-7M3 20h18',
+  shield: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Zm-3-10 2 2 4-4',
+  trendUp: 'm3 17 6-6 4 4 8-8m0 0h-5m5 0v5',
 } as const;
 
 export type IconName = keyof typeof PATHS;

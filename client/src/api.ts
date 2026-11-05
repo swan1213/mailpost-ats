@@ -7,6 +7,7 @@ export type StatusFilter =
   | 'delivered'
   | 'opened'
   | 'failed'
+  | 'spam'
   | 'duplicate'
   | 'skipped';
 
@@ -30,6 +31,8 @@ export interface Row {
   unsent: boolean;
   /** Not sent here, but the address was already emailed from another file */
   duplicate: boolean;
+  /** The recipient reported the email as spam */
+  spam: boolean;
   last_error: string | null;
   attempts: number;
   sent_at: number | null;
@@ -88,7 +91,8 @@ export interface MessageDetail {
   subject: string;
   body: string;
   final: boolean;
-  mailgunId: string | null;
+  /** SES's MessageId for the email */
+  providerId: string | null;
   attempts: number;
   sentAt: number | null;
   events: MailEvent[];
@@ -101,6 +105,33 @@ export interface Settings {
   templateSubject: string;
   templateBody: string;
   testEmail: string;
+  /** branded = ATS Group layout · plain = looks like a personal email */
+  emailStyle: 'branded' | 'plain';
+  /** 0 = no limit */
+  dailyLimit: number;
+  warmupEnabled: boolean;
+  warmupStart: number;
+  warmupGrowthPct: number;
+  warmupStartedAt: number | null;
+  safetyEnabled: boolean;
+  maxBouncePct: number;
+  maxSpamPct: number;
+}
+
+export interface Rates {
+  sent: number;
+  bounced: number;
+  spam: number;
+  bouncePct: number;
+  spamPct: number;
+}
+
+export interface Health {
+  window: number;
+  recent: Rates;
+  allTime: Rates;
+  warmupPlan: { day: number; limit: number }[];
+  repairable: { total: number; queued: number };
 }
 
 export interface AppState {
@@ -113,11 +144,38 @@ export interface AppState {
     run: { total: number; ok: number; fail: number; startedAt: number; stopped: boolean } | null;
   };
   events: { polledAt: number | null; error: string | null; intervalSeconds: number };
-  counts: Record<'total' | 'sent' | 'unsent' | 'queued' | 'delivered' | 'opened' | 'failed', number>;
+  counts: Record<'total' | 'sent' | 'unsent' | 'queued' | 'delivered' | 'opened' | 'failed' | 'spam', number>;
   settings: Settings;
-  limits: { from: string; dailyLimit: number; maxAttempts: number; sentToday: number };
+  limits: {
+    from: string;
+    /** Today's limit (warm-up included); 0 = none */
+    limit: number;
+    warmupDay: number | null;
+    warmupDone: boolean;
+    maxAttempts: number;
+    sentToday: number;
+  };
   /** The server shows a Windows notification when sending pauses */
   desktopNotifications: boolean;
+  provider: ProviderStatus;
+}
+
+/** Amazon SES: what the app set up, and the account's sending status */
+export interface ProviderStatus {
+  name: string;
+  region: string;
+  checkedAt: number | null;
+  setup: { ok: boolean; running: boolean; error: string | null; steps: string[]; contactList: string };
+  account: {
+    production: boolean;
+    sendingEnabled: boolean;
+    max24h: number;
+    maxPerSecond: number;
+    sentLast24h: number;
+    enforcement: string | null;
+  } | null;
+  sender: { identity: string; verified: boolean; dkim: string | null } | null;
+  error: string | null;
 }
 
 export interface ImportResult {
@@ -183,5 +241,10 @@ export const api = {
   pollEvents: () => send<{ fetched: number; applied: number }>('POST', '/events/poll'),
   overview: () => request<Overview>('/overview'),
   testNotification: () => send<{ ok: true }>('POST', '/notify/test'),
-  templatePreview: (subject: string, body: string) => send<TemplatePreview>('POST', '/template/preview', { subject, body }),
+  setupProvider: () => send<ProviderStatus>('POST', '/provider/setup'),
+  refreshProvider: () => send<ProviderStatus>('POST', '/provider/refresh'),
+  templatePreview: (subject: string, body: string, style?: Settings['emailStyle']) =>
+    send<TemplatePreview>('POST', '/template/preview', { subject, body, style }),
+  health: () => request<Health>('/health'),
+  repair: () => send<{ repaired: number; fromQueue: number; backup: string }>('POST', '/repair'),
 };

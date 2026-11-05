@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { api, type Overview } from '../api';
+import { api, type Health, type Overview } from '../api';
 import { compact, timeAgo } from '../format';
 import { Icon, type IconName } from '../Icon';
+import { RateMeter } from '../Reputation';
 import { engineSummary, type Ctx } from '../shell';
 
 const rate = (n: number, of: number) => (of ? `${((n / of) * 100).toFixed(1)}%` : '—');
@@ -9,16 +10,22 @@ const rate = (n: number, of: number) => (of ? `${((n / of) * 100).toFixed(1)}%` 
 export function OverviewPage({ ctx }: { ctx: Ctx }) {
   const { state, uploads, navigate, clock } = ctx;
   const [data, setData] = useState<Overview | null>(null);
+  const [health, setHealth] = useState<Health | null>(null);
   const c = state.counts;
   const engine = engineSummary(state, clock);
 
   useEffect(() => {
     let alive = true;
-    const load = () =>
+    const load = () => {
       api
         .overview()
         .then((d) => alive && setData(d))
         .catch(() => {});
+      api
+        .health()
+        .then((h) => alive && setHealth(h))
+        .catch(() => {});
+    };
     void load();
     const t = setInterval(load, 15_000);
     return () => {
@@ -28,16 +35,21 @@ export function OverviewPage({ ctx }: { ctx: Ctx }) {
   }, []);
 
   const toRecipients = (status: string) => navigate('recipients', { status });
+  const waiting = c.queued + c.unsent;
 
   return (
     <div className="page">
-      <section className="kpis" aria-label="Totals across all files">
-        <Kpi icon="users" label="Recipients" value={c.total} hint={`in ${uploads.length} files`} onClick={() => toRecipients('all')} />
-        <Kpi icon="inbox" label="Not emailed yet" value={c.unsent} hint={c.queued ? `${c.queued.toLocaleString()} in the queue` : 'ready to send'} onClick={() => toRecipients('unsent')} />
-        <Kpi icon="send" label="Sent" value={c.sent} hint={`${state.limits.sentToday.toLocaleString()} today`} onClick={() => toRecipients('sent')} />
+      <section className="kpis" aria-label="Campaign totals">
+        <Kpi icon="send" label="Emails sent" value={c.sent} hint={state.limits.sentToday ? `${state.limits.sentToday.toLocaleString()} today` : 'None today'} onClick={() => toRecipients('sent')} />
         <Kpi icon="checkCircle" tone="good" label="Delivered" value={c.delivered} hint={`${rate(c.delivered, c.sent)} of sent`} onClick={() => toRecipients('delivered')} />
         <Kpi icon="eye" tone="accent" label="Opened" value={c.opened} hint={`${rate(c.opened, c.delivered)} of delivered`} onClick={() => toRecipients('opened')} />
-        <Kpi icon="alert" tone={c.failed ? 'bad' : undefined} label="Failed" value={c.failed} hint={`${rate(c.failed, c.sent)} of sent`} onClick={() => toRecipients('failed')} />
+        <Kpi
+          icon="inbox"
+          label="Still to send"
+          value={waiting}
+          hint={c.queued ? `${c.queued.toLocaleString()} in the queue` : `of ${c.total.toLocaleString()} people`}
+          onClick={() => toRecipients(c.queued ? 'queued' : 'unsent')}
+        />
       </section>
 
       <div className="grid-2">
@@ -48,19 +60,33 @@ export function OverviewPage({ ctx }: { ctx: Ctx }) {
         <section className="card">
           <div className="card-head">
             <div>
-              <h2 className="card-title">Delivery funnel</h2>
-              <p className="card-sub">Every email Mailgun accepted</p>
+              <h2 className="card-title">Sender health</h2>
+              <p className="card-sub">Bounces and spam reports decide whether you reach the inbox</p>
             </div>
           </div>
           <div className="card-body">
-            <Funnel
-              steps={[
-                { label: 'Sent', value: c.sent, note: '' },
-                { label: 'Delivered', value: c.delivered, note: `${rate(c.delivered, c.sent)} of sent` },
-                { label: 'Opened', value: c.opened, note: `${rate(c.opened, c.delivered)} of delivered` },
-              ]}
-            />
-            <p className="fine-print">Opens are counted when the email's images load, so some inboxes under- or over-report them.</p>
+            {health ? (
+              <>
+                <div className="rates stacked">
+                  <RateMeter label="Bounce rate" value={health.allTime.bouncePct} count={health.allTime.bounced} of={health.allTime.sent} limit={5} />
+                  <RateMeter label="Spam reports" value={health.allTime.spamPct} count={health.allTime.spam} of={health.allTime.sent} limit={0.1} />
+                </div>
+                <div className="link-row">
+                  <button className="link-btn" onClick={() => toRecipients('failed')}>
+                    See failed emails
+                  </button>
+                  <button className="link-btn" onClick={() => toRecipients('spam')}>
+                    See spam reports
+                  </button>
+                </div>
+                <p className="fine-print">
+                  Amazon SES steps in above 5% bounces or 0.1% spam reports. Gmail doesn't share individual spam reports, so check Google Postmaster
+                  Tools as well.
+                </p>
+              </>
+            ) : (
+              <p className="muted small">Loading…</p>
+            )}
           </div>
         </section>
       </div>
@@ -70,7 +96,7 @@ export function OverviewPage({ ctx }: { ctx: Ctx }) {
           <div className="card-head">
             <div>
               <h2 className="card-title">Recent activity</h2>
-              <p className="card-sub">Latest delivery, open and bounce events from Mailgun</p>
+              <p className="card-sub">The latest deliveries, opens, bounces and spam reports</p>
             </div>
             <button className="btn ghost small" onClick={() => toRecipients('all')}>
               All recipients
@@ -83,12 +109,12 @@ export function OverviewPage({ ctx }: { ctx: Ctx }) {
                 <li key={e.id}>
                   <button className="activity-row" onClick={() => navigate('recipients', { q: e.email, open: String(e.messageId) })}>
                     <span className={`activity-icon ${e.event}`}>
-                      <Icon name={e.event === 'failed' ? 'alert' : e.event === 'opened' ? 'eye' : 'checkCircle'} size={14} />
+                      <Icon name={e.event === 'failed' || e.event === 'complained' ? 'alert' : e.event === 'opened' ? 'eye' : 'checkCircle'} size={14} />
                     </span>
                     <span className="activity-text">
                       <span className="activity-who">{e.name || e.email}</span>
                       <span className="activity-what">
-                        {e.event === 'failed' ? 'Bounced' : e.event === 'opened' ? 'Opened the email' : e.event === 'clicked' ? 'Clicked a link' : 'Delivered'}
+                        {e.event === 'failed' ? 'Bounced' : e.event === 'complained' ? 'Reported the email as spam' : e.event === 'opened' ? 'Opened the email' : e.event === 'clicked' ? 'Clicked a link' : 'Delivered'}
                         {e.name ? ` · ${e.email}` : ''}
                       </span>
                     </span>
@@ -98,7 +124,7 @@ export function OverviewPage({ ctx }: { ctx: Ctx }) {
               ))}
             </ul>
           ) : (
-            <p className="empty-note">{data ? 'No delivery events yet.' : 'Loading…'}</p>
+            <p className="empty-note">{data ? 'Nothing yet. Deliveries and opens show up here as they happen.' : 'Loading…'}</p>
           )}
         </section>
 
@@ -108,7 +134,7 @@ export function OverviewPage({ ctx }: { ctx: Ctx }) {
               <div>
                 <h2 className="card-title">Sending</h2>
                 <p className="card-sub">
-                  {engine.paused ? `${engine.remaining.toLocaleString()} emails waiting in the queue` : engine.inFlight ? engine.activity : `${c.unsent.toLocaleString()} not emailed yet`}
+                  {engine.paused ? `${engine.remaining.toLocaleString()} emails are waiting` : engine.inFlight ? engine.activity : c.unsent ? `${c.unsent.toLocaleString()} people haven't been emailed yet` : 'Everyone has been emailed'}
                 </p>
               </div>
               <span className={`engine-chip static ${engine.tone}`}>
@@ -121,7 +147,7 @@ export function OverviewPage({ ctx }: { ctx: Ctx }) {
                 <>
                   <div className="mini-progress-head">
                     <span>
-                      <b>{engine.done.toLocaleString()}</b> of {engine.run.total.toLocaleString()} {engine.inFlight ? 'in this run' : 'in the last run'}
+                      <b>{engine.done.toLocaleString()}</b> of {engine.run.total.toLocaleString()} {engine.inFlight ? 'sent in this run' : 'sent in the last run'}
                     </span>
                     <span className="muted">{Math.round(engine.pct)}%</span>
                   </div>
@@ -130,7 +156,7 @@ export function OverviewPage({ ctx }: { ctx: Ctx }) {
                   </div>
                 </>
               ) : (
-                <p className="muted small">Nothing has been sent yet.</p>
+                <p className="muted small">You haven't sent anything yet.</p>
               )}
               <div className="card-actions">
                 {!engine.inFlight && (
@@ -140,7 +166,7 @@ export function OverviewPage({ ctx }: { ctx: Ctx }) {
                   </button>
                 )}
                 <button className="btn" onClick={() => navigate('sending')}>
-                  Open Sending
+                  Go to Sending
                   <Icon name="arrowRight" size={14} />
                 </button>
               </div>
@@ -151,7 +177,7 @@ export function OverviewPage({ ctx }: { ctx: Ctx }) {
             <div className="card-head">
               <div>
                 <h2 className="card-title">Files</h2>
-                <p className="card-sub">Progress per CSV</p>
+                <p className="card-sub">How far each list has got</p>
               </div>
               <button className="btn ghost small" onClick={() => navigate('files')}>
                 Manage
@@ -199,7 +225,7 @@ function Kpi({
   label: string;
   value: number;
   hint: string;
-  tone?: 'good' | 'accent' | 'bad';
+  tone?: 'good' | 'accent' | 'warn' | 'bad';
   onClick: () => void;
 }) {
   return (
@@ -331,28 +357,5 @@ function SendsChart({ days }: { days: Overview['days'] | null }) {
         )}
       </div>
     </>
-  );
-}
-
-/** Sent → delivered → opened, each bar's length relative to Sent, every value labelled. */
-function Funnel({ steps }: { steps: { label: string; value: number; note: string }[] }) {
-  const base = Math.max(1, steps[0].value);
-  return (
-    <ol className="funnel">
-      {steps.map((s) => (
-        <li key={s.label}>
-          <div className="funnel-head">
-            <span className="funnel-label">{s.label}</span>
-            <span className="funnel-value">
-              {s.value.toLocaleString()}
-              {s.note && <span className="muted"> · {s.note}</span>}
-            </span>
-          </div>
-          <div className="funnel-track">
-            <div className="funnel-bar" style={{ width: `${Math.max(0.5, (s.value / base) * 100)}%` }} />
-          </div>
-        </li>
-      ))}
-    </ol>
   );
 }

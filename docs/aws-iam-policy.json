@@ -1,0 +1,46 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "SendAndReadAccountStatus",
+      "Effect": "Allow",
+      "Action": ["ses:SendEmail", "ses:GetAccount", "ses:GetEmailIdentity"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SetUpConfigurationSetAndContactList",
+      "Effect": "Allow",
+      "Action": [
+        "ses:CreateConfigurationSet",
+        "ses:GetConfigurationSet",
+        "ses:GetConfigurationSetEventDestinations",
+        "ses:CreateConfigurationSetEventDestination",
+        "ses:UpdateConfigurationSetEventDestination",
+        "ses:ListContactLists",
+        "ses:GetContactList",
+        "ses:CreateContactList",
+        "ses:UpdateContactList"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "EventsTopic",
+      "Effect": "Allow",
+      "Action": ["sns:CreateTopic", "sns:SetTopicAttributes", "sns:GetTopicAttributes", "sns:Subscribe"],
+      "Resource": "arn:aws:sns:*:*:mailpost-ses-events"
+    },
+    {
+      "Sid": "EventsQueue",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:CreateQueue",
+        "sqs:GetQueueUrl",
+        "sqs:GetQueueAttributes",
+        "sqs:SetQueueAttributes",
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage"
+      ],
+      "Resource": "arn:aws:sqs:*:*:mailpost-ses-events"
+    }
+  ]
+}

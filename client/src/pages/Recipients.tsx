@@ -7,15 +7,16 @@ import { describeQueued, routeHash, type Ctx } from '../shell';
 import { StatusPills } from '../StatusPills';
 
 const STATUS_TABS: { value: StatusFilter; label: string; hint: string; hideWhenEmpty?: boolean }[] = [
-  { value: 'all', label: 'All', hint: 'Every recipient' },
-  { value: 'unsent', label: 'Not emailed', hint: 'Not emailed yet, ready to send' },
-  { value: 'queued', label: 'Queued', hint: 'Waiting in the send queue' },
-  { value: 'sent', label: 'Sent', hint: 'Accepted by Mailgun (includes delivered and bounced)' },
-  { value: 'delivered', label: 'Delivered', hint: 'Reached the inbox server' },
-  { value: 'opened', label: 'Opened', hint: 'Opened at least once' },
-  { value: 'failed', label: 'Failed', hint: 'Bounced, or could not be sent after all tries' },
-  { value: 'duplicate', label: 'Already emailed', hint: 'Same address was emailed from another file', hideWhenEmpty: true },
-  { value: 'skipped', label: 'Invalid', hint: 'Bad CSV row, e.g. an invalid email address', hideWhenEmpty: true },
+  { value: 'all', label: 'All', hint: 'Everyone in your files' },
+  { value: 'unsent', label: 'Not emailed', hint: "People who haven't been emailed yet" },
+  { value: 'queued', label: 'Queued', hint: 'Waiting their turn in the queue' },
+  { value: 'sent', label: 'Sent', hint: 'Accepted by Amazon SES, whether it was delivered or bounced' },
+  { value: 'delivered', label: 'Delivered', hint: "Reached the recipient's mail server" },
+  { value: 'opened', label: 'Opened', hint: 'Opened the email at least once' },
+  { value: 'failed', label: 'Failed', hint: "Bounced, or couldn't be sent after every retry" },
+  { value: 'spam', label: 'Reported spam', hint: 'Marked the email as spam. They will never be emailed again.', hideWhenEmpty: true },
+  { value: 'duplicate', label: 'Already emailed', hint: 'The same address was already emailed from another file', hideWhenEmpty: true },
+  { value: 'skipped', label: 'Skipped', hint: 'A bad CSV row, or someone who must not be emailed again', hideWhenEmpty: true },
 ];
 
 const PAGE_SIZES = [50, 100, 200, 500];
@@ -119,6 +120,8 @@ export function RecipientsPage({ ctx }: { ctx: Ctx }) {
   const { settings } = state;
   const inFlight = state.counts.queued > 0 || state.engine.sending;
   const pageUnsent = page.rows.filter((r) => r.unsent);
+  // Most CSVs have no location; the column only appears when this page has some.
+  const showLoc = page.rows.some((r) => r.location.trim());
   const pageAllSelected = pageUnsent.length > 0 && pageUnsent.every((r) => allMatching !== null || selected.has(r.id));
   const pageSomeSelected = !pageAllSelected && pageUnsent.some((r) => selected.has(r.id));
   const selectionCount = allMatching ?? selected.size;
@@ -231,9 +234,9 @@ export function RecipientsPage({ ctx }: { ctx: Ctx }) {
             <button
               className="icon-btn"
               disabled={busy}
-              title="Fetch the latest delivery and open events from Mailgun now"
-              aria-label="Sync with Mailgun"
-              onClick={() => act(async () => `Synced with Mailgun · ${plural((await api.pollEvents()).applied, 'new event')}.`)}
+              title="Fetch the latest delivery and open events from Amazon SES now"
+              aria-label="Sync with Amazon SES"
+              onClick={() => act(async () => `Synced with Amazon SES · ${plural((await api.pollEvents()).applied, 'new event')}.`)}
             >
               <Icon name="refresh" />
             </button>
@@ -298,11 +301,11 @@ export function RecipientsPage({ ctx }: { ctx: Ctx }) {
                     onChange={togglePage}
                   />
                 </th>
-                <th>Recipient</th>
-                <th>Message</th>
-                <th className="col-loc">Location</th>
-                <th>Status</th>
-                <th className="right">Sent</th>
+                <th className="col-who">Recipient</th>
+                <th className="col-msg">Message</th>
+                {showLoc && <th className="col-loc">Location</th>}
+                <th className="col-status">Status</th>
+                <th className="right col-sent">Sent</th>
               </tr>
             </thead>
             <tbody>
@@ -314,11 +317,12 @@ export function RecipientsPage({ ctx }: { ctx: Ctx }) {
                   active={openRow?.id === r.id}
                   onCheck={() => toggleRow(r.id)}
                   onOpen={() => setOpenRow(r)}
+                  showLoc={showLoc}
                 />
               ))}
               {!page.rows.length && (
                 <tr className="empty-row">
-                  <td colSpan={6}>
+                  <td colSpan={showLoc ? 6 : 5}>
                     <div className="empty">
                       <span className="empty-icon">
                         <Icon name={uploads.length ? 'inbox' : 'upload'} size={22} />
@@ -401,14 +405,15 @@ export function RecipientsPage({ ctx }: { ctx: Ctx }) {
 
 interface RowProps {
   row: Row;
+  showLoc: boolean;
   checked: boolean;
   active: boolean;
   onCheck: () => void;
   onOpen: () => void;
 }
 
-function TableRow({ row: r, checked, active, onCheck, onOpen }: RowProps) {
-  const lockedReason = r.duplicate ? 'Already emailed from another file' : r.status === 'skipped' ? 'Invalid row' : 'Already sent or queued';
+function TableRow({ row: r, checked, active, onCheck, onOpen, showLoc }: RowProps) {
+  const lockedReason = r.duplicate ? 'Already emailed from another file' : r.status === 'skipped' ? "Skipped, so it can't be sent" : 'Already sent or in the queue';
   return (
     <tr className={`row ${active ? 'active' : ''} ${checked ? 'checked' : ''}`} onClick={onOpen} onKeyDown={(e) => e.key === 'Enter' && onOpen()} tabIndex={0}>
       <td className="check" onClick={(e) => e.stopPropagation()}>
@@ -428,11 +433,11 @@ function TableRow({ row: r, checked, active, onCheck, onOpen }: RowProps) {
       <td className="message">
         <div className="msg-subject">
           <span className="clamp1">{r.subject}</span>
-          {r.source === 'template' && <span className="tag">template</span>}
+          {r.source === 'template' && <span className="tag" title="Uses the email from the Template page">template</span>}
         </div>
         <div className="msg-preview clamp1">{r.bodyPreview}</div>
       </td>
-      <td className={`loc ${r.location ? '' : 'none'}`}>{r.location || <span className="muted">—</span>}</td>
+      {showLoc && <td className={`loc ${r.location ? '' : 'none'}`}>{r.location || <span className="muted">—</span>}</td>}
       <td className="status">
         <StatusPills row={r} />
         {r.last_error && (

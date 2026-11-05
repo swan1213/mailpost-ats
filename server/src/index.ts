@@ -8,6 +8,7 @@ import {
   filterSql,
   getMessage,
   SENDABLE_SQL,
+  SPAM_SQL,
   STATUS_FILTERS,
   statusCounts,
   UNSENT_SQL,
@@ -17,10 +18,13 @@ import {
 } from './db.js';
 import { emailHtml } from './emailHtml.js';
 import { eventsStatus, pollEvents, startEventPoller } from './events.js';
+import { providerStatus, refreshAccount, setupSes, startProvider } from './sesSetup.js';
 import { reimportFolder, saveAndImport } from './importer.js';
 import { desktopNotificationsAvailable, notifyDesktop } from './notify.js';
 import { engineStatus, queueMessages, resume, resumeOnBoot, sendTemplateTest, sendTest, sentToday, stop } from './sender.js';
-import { getSettings, render, updateSettings, ValidationError } from './settings.js';
+import { HEALTH_WINDOW, rates } from './health.js';
+import { repairableCount, repairHistory } from './repair.js';
+import { dailyCap, getSettings, render, updateSettings, ValidationError, warmupLimitOn } from './settings.js';
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -50,15 +54,40 @@ app.get('/api/state', (_req, res) => {
       delivered: count("status = 'delivered'"),
       opened: count('opened_at IS NOT NULL'),
       failed: count("status = 'failed'"),
+      spam: count(SPAM_SQL),
     },
     settings: getSettings(),
-    limits: { from: config.mailFrom, dailyLimit: config.dailyLimit, maxAttempts: config.maxAttempts, sentToday: sentToday() },
+    limits: { from: config.mailFrom, ...dailyCap(), maxAttempts: config.maxAttempts, sentToday: sentToday() },
     desktopNotifications: desktopNotificationsAvailable(),
+    provider: providerStatus(),
   });
 });
 
 app.put('/api/settings', (req, res) => {
   res.json(updateSettings(req.body ?? {}));
+});
+
+/** Sending page: bounce and spam rates (recent and all-time), the warm-up plan, and rows whose history can be repaired. */
+app.get('/api/health', (_req, res) => {
+  const settings = getSettings();
+  const cap = dailyCap(settings);
+  const firstDay = cap.warmupDay ?? 1;
+  res.json({
+    window: HEALTH_WINDOW,
+    recent: rates(HEALTH_WINDOW),
+    allTime: rates(),
+    // The next 7 days of the warm-up (from today, or from day 1 if it isn't on yet), capped by the daily limit.
+    warmupPlan: Array.from({ length: 7 }, (_, i) => {
+      const day = firstDay + i;
+      const warm = warmupLimitOn(settings, day);
+      return { day, limit: settings.dailyLimit > 0 ? Math.min(warm, settings.dailyLimit) : warm };
+    }),
+    repairable: repairableCount(),
+  });
+});
+
+app.post('/api/repair', (_req, res) => {
+  res.json(repairHistory());
 });
 
 app.get('/api/uploads', (_req, res) => {
@@ -81,7 +110,7 @@ const DAY_MS = 86_400_000;
 const localDay = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-/** Overview page: sent / delivered / opened per day for the last 14 days, and the latest Mailgun events. */
+/** Overview page: sent / delivered / opened per day for the last 14 days, and the latest delivery events. */
 app.get('/api/overview', (_req, res) => {
   const start = new Date();
   start.setHours(0, 0, 0, 0);
@@ -111,7 +140,7 @@ app.get('/api/overview', (_req, res) => {
     .prepare(
       `SELECT e.id, e.event, e.ts, e.detail, m.id AS messageId, m.email, m.name
        FROM events e JOIN messages m ON m.id = e.message_id
-       WHERE e.event IN ('delivered', 'opened', 'clicked', 'failed')
+       WHERE e.event IN ('delivered', 'opened', 'clicked', 'failed', 'complained')
        ORDER BY e.ts DESC LIMIT 12`,
     )
     .all();
@@ -129,14 +158,16 @@ app.post('/api/template/preview', (req, res) => {
     email: 'alex@example.com',
     location: '',
   };
+  const settings = getSettings();
+  const style = req.body?.style === 'plain' || req.body?.style === 'branded' ? req.body.style : settings.emailStyle;
   const mail = render(
     { name: sample.name, email: sample.email, location: sample.location, csv_subject: '', csv_content: '' },
-    { ...getSettings(), templateSubject: subject, templateBody: body },
+    { ...settings, templateSubject: subject, templateBody: body },
   );
   const count = (where: string) => (db.prepare(`SELECT COUNT(*) AS n FROM messages WHERE ${where}`).get() as { n: number }).n;
   res.json({
     subject: mail.subject,
-    html: emailHtml(mail.subject, mail.body),
+    html: emailHtml(mail.subject, mail.body, { style }),
     filledFor: sample.name || sample.email,
     recipients: count(usesTemplate),
     unsent: count(`${usesTemplate} AND ${SENDABLE_SQL}`),
@@ -166,9 +197,9 @@ app.get('/api/messages', (req, res) => {
   const settings = getSettings();
   const rows = db
     .prepare(
-      `SELECT *, (${UNSENT_SQL} AND ${EMAILED_ELSEWHERE_SQL}) AS duplicate FROM messages WHERE ${where} ORDER BY id LIMIT ? OFFSET ?`,
+      `SELECT *, (${UNSENT_SQL} AND ${EMAILED_ELSEWHERE_SQL}) AS duplicate, ${SPAM_SQL} AS spam FROM messages WHERE ${where} ORDER BY id LIMIT ? OFFSET ?`,
     )
-    .all(...params, pageSize, (page - 1) * pageSize) as unknown as (MessageRow & { duplicate: number })[];
+    .all(...params, pageSize, (page - 1) * pageSize) as unknown as (MessageRow & { duplicate: number; spam: number })[];
 
   res.json({
     total,
@@ -190,8 +221,9 @@ app.get('/api/messages', (req, res) => {
         source: preview.source,
         status: m.status,
         // "unsent" = can be selected and sent; "duplicate" = unsent here, but the address was emailed from another file.
-        unsent: (m.status === 'new' || (m.status === 'failed' && !m.mailgun_id)) && !m.duplicate,
+        unsent: (m.status === 'new' || (m.status === 'failed' && !m.provider_id)) && !m.duplicate,
         duplicate: Boolean(m.duplicate),
+        spam: Boolean(m.spam),
         last_error: m.last_error,
         attempts: m.attempts,
         sent_at: m.sent_at,
@@ -217,7 +249,7 @@ app.get('/api/messages/:id', (req, res) => {
     subject: message.sent_subject ?? preview.subject,
     body: message.sent_body ?? preview.body,
     final: message.sent_body !== null,
-    mailgunId: message.mailgun_id,
+    providerId: message.provider_id,
     attempts: message.attempts,
     sentAt: message.sent_at,
     events: db.prepare('SELECT * FROM events WHERE message_id = ? ORDER BY ts').all(message.id),
@@ -232,7 +264,7 @@ app.get('/api/messages/:id/html', (req, res) => {
     return;
   }
   const preview = render(message);
-  res.type('html').send(emailHtml(message.sent_subject ?? preview.subject, message.sent_body ?? preview.body));
+  res.type('html').send(emailHtml(message.sent_subject ?? preview.subject, message.sent_body ?? preview.body, { style: getSettings().emailStyle }));
 });
 
 /** Body: { ids: number[] } for "Send selected", or { filter } for "Send all unsent" / "Start auto-send". */
@@ -272,6 +304,19 @@ app.post('/api/events/poll', async (_req, res) => {
 });
 
 /** Shows a sample "sending paused" notification on the server's Windows desktop. */
+/** Creates or repairs the SES configuration set, SNS topic, SQS queue and contact list, then re-reads the account. */
+app.post('/api/provider/setup', async (_req, res) => {
+  const st = await setupSes();
+  if (!st.setup.ok) throw new ValidationError(st.setup.error ?? 'SES setup failed');
+  res.json(st);
+});
+
+/** Re-reads the SES account status (sandbox/production, quota, sender verification). */
+app.post('/api/provider/refresh', async (_req, res) => {
+  await refreshAccount();
+  res.json(providerStatus());
+});
+
 app.post('/api/notify/test', async (_req, res) => {
   if (!desktopNotificationsAvailable()) throw new ValidationError('Windows notifications are off (the server is not on Windows, or DESKTOP_NOTIFICATIONS=0)');
   await notifyDesktop('MailPost: test notification', 'This is how MailPost tells you when sending pauses. Click to open the dashboard.');
@@ -295,6 +340,7 @@ app.use((err: Error & { status?: number }, _req: Request, res: Response, _next: 
   res.status(status).json({ error: status === 413 ? 'The upload is too large' : err.message });
 });
 
+startProvider();
 resumeOnBoot();
 startEventPoller();
 

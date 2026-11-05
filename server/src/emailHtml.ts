@@ -153,16 +153,14 @@ function pillars(): string {
       </td></tr>`;
 }
 
-function footer(): string {
+function footer(unsubscribeUrl: string): string {
   const { name, url, location, established } = config.brand;
   const site = url.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
   const contact = `${url.replace(/\/$/, '')}/#contact`;
   const link = (href: string, label: string) =>
     `<a href="${esc(href)}" style="color:${C.gold};text-decoration:none;font-weight:600;">${label}</a>`;
-  const unsubscribe = config.unsubscribeMailto
-    ? `<br>You are receiving this email from ${esc(name)}. If you'd rather not hear from us,
-       <a href="${esc(config.unsubscribeMailto)}?subject=unsubscribe" style="color:${C.onNavy};text-decoration:underline;">unsubscribe here</a>.`
-    : '';
+  const unsubscribe = `<br>You are receiving this email from ${esc(name)}. If you'd rather not hear from us,
+       <a href="${unsubscribeUrl}" style="color:${C.onNavy};text-decoration:underline;">unsubscribe here</a>.`;
   return `
       <tr><td bgcolor="${C.navy}" style="${FONT}background-color:${C.navy};padding:26px 36px 28px;color:${C.onNavy};font-size:12px;line-height:1.7;" class="mp-pad">
         <div style="font-size:14px;font-weight:700;color:#ffffff;">${esc(name)}</div>
@@ -175,8 +173,48 @@ function footer(): string {
       </td></tr>`;
 }
 
-/** Branded HTML version of a plain-text email. The plain text is still sent alongside it. */
-export function emailHtml(subject: string, text: string): string {
+/**
+ * Looks like an email a person typed: no header, images or button, just text, a signature and a small unsubscribe
+ * line. Inbox filters treat this much more like personal mail than the branded layout.
+ */
+function plainHtml(subject: string, text: string, unsubscribeUrl: string): string {
+  const { name, location } = config.brand;
+  const body = text
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => `<p style="margin:0 0 14px;">${p.split('\n').map((l) => linkify(l.trim())).join('<br>')}</p>`)
+    .join('\n');
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(subject)}</title>
+</head>
+<body style="margin:0;padding:0;background:#ffffff;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;">${esc(preheader(text))}</div>
+<div style="${FONT}max-width:600px;padding:20px 16px;font-size:15px;line-height:1.6;color:#222222;">
+${body}
+<p style="margin:28px 0 0;font-size:12px;line-height:1.5;color:#888888;">${esc(name)} &middot; ${esc(location)}<br>
+If you'd rather not get emails like this, <a href="${unsubscribeUrl}" style="color:#888888;text-decoration:underline;">unsubscribe</a>.</p>
+</div>
+</body>
+</html>`;
+}
+
+/** HTML version of a plain-text email (branded layout or plain). The plain text is still sent alongside it. */
+export function emailHtml(
+  subject: string,
+  text: string,
+  options: {
+    /** Footer link. SES replaces the {{amazonSESUnsubscribeUrl}} placeholder per recipient; previews use "#". */
+    unsubscribeUrl?: string;
+    style?: 'branded' | 'plain';
+  } = {},
+): string {
+  const unsubscribeUrl = options.unsubscribeUrl ?? '#';
+  if (options.style === 'plain') return plainHtml(subject, text, unsubscribeUrl);
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -203,7 +241,7 @@ export function emailHtml(subject: string, text: string): string {
         ${renderBody(text)}
       </td></tr>
       ${pillars()}
-      ${footer()}
+      ${footer(unsubscribeUrl)}
     </table>
   </td></tr>
 </table>

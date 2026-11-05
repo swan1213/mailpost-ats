@@ -33,7 +33,7 @@ export function DelayControl({ settings, run }: { settings: Settings; run: (acti
         reset();
         throw err;
       }
-      return `Pace saved: ${delayRange(s, m)}.`;
+      return `Pace updated: ${delayRange(s, m)} between emails.`;
     });
   };
 
@@ -67,8 +67,8 @@ export function DelayControl({ settings, run }: { settings: Settings; run: (acti
 
   return (
     <div className="pace-fields">
-      {field('delay-base', 'Base delay', 'Always waited between two emails', base, setBase)}
-      {field('delay-random', 'Random extra', 'Up to this many seconds added, so the timing looks human', max, setMax)}
+      {field('delay-base', 'Wait at least', 'The minimum gap between two emails', base, setBase)}
+      {field('delay-random', 'Plus up to', 'A random extra wait, so the timing looks natural', max, setMax)}
     </div>
   );
 }

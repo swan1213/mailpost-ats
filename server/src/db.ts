@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { config } from './config.js';
 
-/** new = imported, not sent yet · skipped = bad row in the CSV, never sendable */
+/** new = imported, not sent yet · skipped = bad row in the CSV, or an address that must not be emailed again */
 export type Status = 'new' | 'queued' | 'sending' | 'sent' | 'delivered' | 'failed' | 'skipped';
 
 export interface MessageRow {
@@ -15,7 +15,8 @@ export interface MessageRow {
   status: Status;
   attempts: number;
   last_error: string | null;
-  mailgun_id: string | null;
+  /** SES's MessageId for this email; its delivery events refer back to it */
+  provider_id: string | null;
   sent_subject: string | null;
   sent_body: string | null;
   created_at: number;
@@ -52,7 +53,7 @@ db.exec(`
     status       TEXT    NOT NULL,
     attempts     INTEGER NOT NULL DEFAULT 0,
     last_error   TEXT,
-    mailgun_id   TEXT,
+    provider_id  TEXT,
     sent_subject TEXT,
     sent_body    TEXT,
     created_at   INTEGER NOT NULL,
@@ -65,12 +66,8 @@ db.exec(`
     failed_at    INTEGER,
     UNIQUE (upload_id, email)
   );
-  CREATE INDEX IF NOT EXISTS idx_messages_status ON messages (status, queued_at);
-  CREATE INDEX IF NOT EXISTS idx_messages_mailgun_id ON messages (mailgun_id);
-  -- Duplicate-recipient check across CSV files when queueing
-  CREATE INDEX IF NOT EXISTS idx_messages_email ON messages (email);
 
-  -- Mailgun events, keyed by Mailgun's event id so repeated polls never double-apply
+  -- SES delivery events (from the SQS queue), keyed type:message:time so a redelivered event is applied once
   CREATE TABLE IF NOT EXISTS events (
     id         TEXT    PRIMARY KEY,
     message_id INTEGER NOT NULL REFERENCES messages (id) ON DELETE CASCADE,
@@ -85,6 +82,13 @@ db.exec(`
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
+
+  CREATE INDEX IF NOT EXISTS idx_messages_status ON messages (status, queued_at);
+  CREATE INDEX IF NOT EXISTS idx_messages_provider_id ON messages (provider_id);
+  -- Duplicate-recipient check across CSV files when queueing
+  CREATE INDEX IF NOT EXISTS idx_messages_email ON messages (email);
+  -- Safety check: the most recent sends
+  CREATE INDEX IF NOT EXISTS idx_messages_sent_at ON messages (sent_at);
 `);
 
 export const now = () => Date.now();
@@ -117,15 +121,29 @@ export function transaction<T>(fn: () => T): T {
   }
 }
 
-/** Rows that can be put in the send queue: never sent, or failed before Mailgun accepted them. */
-export const UNSENT_SQL = "(status = 'new' OR (status = 'failed' AND mailgun_id IS NULL))";
+/** Rows that can be put in the send queue: never sent, or failed before the provider accepted them. */
+export const UNSENT_SQL = "(status = 'new' OR (status = 'failed' AND provider_id IS NULL))";
 
-/** Another row (usually from another CSV) already emailed this address, or is about to. */
-export const EMAILED_ELSEWHERE_SQL = `EXISTS (SELECT 1 FROM messages o WHERE o.email = messages.email AND o.id <> messages.id
-  AND (o.sent_at IS NOT NULL OR o.status IN ('queued', 'sending')))`;
+/**
+ * The event history shows this address was already emailed, reported spam or unsubscribed, on any row.
+ * This holds even when a row's sent_at was later lost (rows reset to unsent still keep their events).
+ */
+export const CONTACTED_SQL = `EXISTS (SELECT 1 FROM messages o JOIN events e ON e.message_id = o.id
+  WHERE o.email = messages.email AND e.event IN ('accepted', 'complained', 'unsubscribed'))`;
+
+/** Must not be emailed (again): already emailed per the events, or another row (usually another CSV) has sent to it. */
+export const NEVER_AGAIN_SQL = `(${CONTACTED_SQL} OR EXISTS (SELECT 1 FROM messages o WHERE o.email = messages.email
+  AND o.id <> messages.id AND o.sent_at IS NOT NULL))`;
+
+/** Another row already emailed this address, or is about to (queued), or the events say it must not be emailed. */
+export const EMAILED_ELSEWHERE_SQL = `(${NEVER_AGAIN_SQL} OR EXISTS (SELECT 1 FROM messages o WHERE o.email = messages.email
+  AND o.id <> messages.id AND o.status IN ('queued', 'sending')))`;
 
 /** Unsent rows that would really be sent: queueMessages() skips addresses already emailed from another file. */
 export const SENDABLE_SQL = `(${UNSENT_SQL} AND NOT ${EMAILED_ELSEWHERE_SQL})`;
+
+/** The recipient pressed "Report spam" (an SES complaint event). */
+export const SPAM_SQL = `EXISTS (SELECT 1 FROM events c WHERE c.message_id = messages.id AND c.event = 'complained')`;
 
 export type StatusFilter =
   | 'all'
@@ -135,6 +153,7 @@ export type StatusFilter =
   | 'delivered'
   | 'opened'
   | 'failed'
+  | 'spam'
   | 'duplicate'
   | 'skipped';
 
@@ -148,11 +167,12 @@ const STATUS_SQL: Record<StatusFilter, string> = {
   all: '1',
   unsent: SENDABLE_SQL,
   queued: "status IN ('queued', 'sending')",
-  // Everything Mailgun accepted (delivered and bounced included), matching the "Sent" total on the dashboard.
+  // Everything the provider accepted (delivered and bounced included), matching the "Sent" total on the dashboard.
   sent: 'sent_at IS NOT NULL',
   delivered: "status = 'delivered'",
   opened: 'opened_at IS NOT NULL',
   failed: "status = 'failed'",
+  spam: SPAM_SQL,
   duplicate: `(${UNSENT_SQL} AND ${EMAILED_ELSEWHERE_SQL})`,
   skipped: "status = 'skipped'",
 };

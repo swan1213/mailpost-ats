@@ -24,8 +24,6 @@ function int(name: string, fallback: number): number {
   return value;
 }
 
-const unsubscribe = optional('UNSUBSCRIBE_MAILTO');
-
 /**
  * Where the database and uploaded CSVs live. On Vercel the code directory is read-only and only /tmp is
  * writable, and /tmp is wiped whenever Vercel replaces the instance, so data there is not kept.
@@ -33,14 +31,26 @@ const unsubscribe = optional('UNSUBSCRIBE_MAILTO');
 const DATA_DIR = process.env.VERCEL ? '/tmp' : ROOT;
 
 export const config = {
-  mailgun: {
-    apiKey: required('MAILGUN_API_KEY'),
-    domain: required('MAILGUN_DOMAIN'),
-    baseUrl: optional('MAILGUN_BASE_URL', 'https://api.mailgun.net').replace(/\/+$/, ''),
+  /**
+   * Amazon SES. Credentials come from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (or any standard AWS credential
+   * source); the names below are the resources the app creates on start-up when autoSetup is on.
+   */
+  ses: {
+    region: required('AWS_REGION'),
+    autoSetup: optional('SES_AUTO_SETUP', '1') !== '0',
+    configurationSet: optional('SES_CONFIGURATION_SET', 'mailpost'),
+    /** SES publishes delivery events to this SNS topic, which forwards them to the SQS queue the app reads. */
+    eventsTopic: optional('SES_EVENTS_TOPIC', 'mailpost-ses-events'),
+    eventsQueue: optional('SES_EVENTS_QUEUE', 'mailpost-ses-events'),
+    /** One-click unsubscribe. An AWS account has a single contact list, so an existing one is reused. */
+    contactList: optional('SES_CONTACT_LIST', 'mailpost'),
+    unsubscribeTopic: optional('SES_UNSUBSCRIBE_TOPIC', 'outreach'),
+    /** Open tracking (adds a tracking pixel). Set to 0 to turn off. */
+    trackOpens: optional('SES_TRACK_OPENS', '1') !== '0',
   },
+  /** Must be an address on a domain verified in SES (same region). "Name <address>" is fine. */
   mailFrom: required('MAIL_FROM'),
   replyTo: optional('REPLY_TO'),
-  unsubscribeMailto: unsubscribe && !unsubscribe.startsWith('mailto:') ? `mailto:${unsubscribe}` : unsubscribe,
 
   /** Branding for the HTML email layout */
   brand: {
@@ -56,7 +66,7 @@ export const config = {
   /** Uploaded CSVs are saved here; "Re-import" re-reads every CSV in it. */
   csvDir: path.resolve(DATA_DIR, optional('CSV_DIR', 'data')),
 
-  /** Mailgun tag on every email; status polling only looks at this tag. */
+  /** Tag (and campaign) on every email; status polling only looks at this tag. */
   mailTag: optional('CAMPAIGN_TAG', 'mailpost'),
   dailyLimit: int('DAILY_LIMIT', 0),
   maxAttempts: Math.max(1, int('MAX_ATTEMPTS', 3)),

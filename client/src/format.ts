@@ -56,4 +56,7 @@ export function emailsPerHour(base: number, randomMax: number): number {
   return averageWait > 0 ? 3600 / averageWait : Infinity;
 }
 
-export const plural =(n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
+const IRREGULAR: Record<string, string> = { person: 'people' };
+
+/** "1 email", "3 emails", "2 people". */
+export const plural = (n: number, word: string) => `${n.toLocaleString()} ${n === 1 ? word : (IRREGULAR[word] ?? `${word}s`)}`;

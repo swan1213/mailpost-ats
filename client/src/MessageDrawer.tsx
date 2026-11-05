@@ -83,7 +83,7 @@ export function MessageDrawer({ row, filename, testEmail, busy, run, onSendNow, 
           {row.duplicate && (
             <div className="callout warn">
               <Icon name="alert" />
-              <span>This address was already emailed from another file, so it won't be sent again.</span>
+              <span>This address was already emailed from another file, so it won't get this one.</span>
             </div>
           )}
           {row.last_error && (
@@ -103,11 +103,11 @@ export function MessageDrawer({ row, filename, testEmail, busy, run, onSendNow, 
             <button
               className="btn"
               disabled={busy || !testEmail}
-              title={testEmail ? 'Sends this exact email to your test address' : 'Set a test address under "Template & test"'}
+              title={testEmail ? 'Sends this exact email to your test address' : 'Add a test address on the Template page first'}
               onClick={() =>
                 run(async () => {
                   const r = await api.sendTest(row.id);
-                  return `Test of ${r.basedOn}'s email sent to ${r.to}.`;
+                  return `A copy of ${r.basedOn}'s email is on its way to ${r.to}.`;
                 })
               }
             >
@@ -118,7 +118,7 @@ export function MessageDrawer({ row, filename, testEmail, busy, run, onSendNow, 
 
           <section className="drawer-section">
             <div className="section-head">
-              <h3>{detail?.final ? 'Email as sent' : 'Email preview'}</h3>
+              <h3>{detail?.final ? 'The email as it was sent' : 'How the email will look'}</h3>
               <div className="view-switch" role="tablist">
                 <button role="tab" aria-selected={view === 'email'} className={view === 'email' ? 'active' : ''} onClick={() => setView('email')}>
                   Formatted
@@ -156,7 +156,7 @@ export function MessageDrawer({ row, filename, testEmail, busy, run, onSendNow, 
           </section>
 
           <section className="drawer-section">
-            <h3>Delivery activity</h3>
+            <h3>What happened</h3>
             {detail?.events.length ? (
               <ul className="events">
                 {detail.events.map((e) => (
@@ -170,9 +170,9 @@ export function MessageDrawer({ row, filename, testEmail, busy, run, onSendNow, 
                 ))}
               </ul>
             ) : (
-              <p className="muted small">{row.sent_at ? 'No events from Mailgun yet.' : 'Not sent yet.'}</p>
+              <p className="muted small">{row.sent_at ? 'No events from SES yet.' : 'Not sent yet.'}</p>
             )}
-            {detail?.mailgunId && <p className="mono-note">Mailgun ID {detail.mailgunId}</p>}
+            {detail?.providerId && <p className="mono-note">SES message ID {detail.providerId}</p>}
           </section>
         </div>
       </aside>

@@ -7,11 +7,11 @@ import type { PushToast } from './Toasts';
 export type PageName = 'overview' | 'recipients' | 'sending' | 'template' | 'files';
 
 export const NAV: { page: PageName; label: string; icon: IconName; hint: string }[] = [
-  { page: 'overview', label: 'Overview', icon: 'grid', hint: 'Campaign results at a glance' },
-  { page: 'recipients', label: 'Recipients', icon: 'users', hint: 'Everyone in your CSV files' },
-  { page: 'sending', label: 'Sending', icon: 'send', hint: 'Start, stop and pace the queue' },
-  { page: 'template', label: 'Template', icon: 'fileText', hint: 'The email for rows without a subject' },
-  { page: 'files', label: 'Files', icon: 'folder', hint: 'Uploaded CSV files' },
+  { page: 'overview', label: 'Overview', icon: 'grid', hint: 'How your outreach is doing' },
+  { page: 'recipients', label: 'Recipients', icon: 'users', hint: 'Everyone you have imported' },
+  { page: 'sending', label: 'Sending', icon: 'send', hint: 'Start, pause and pace your emails' },
+  { page: 'template', label: 'Template', icon: 'fileText', hint: 'Your default email' },
+  { page: 'files', label: 'Files', icon: 'folder', hint: 'Your imported CSV lists' },
 ];
 
 /** Everything a page needs from the shell. */
@@ -51,9 +51,9 @@ export function routeHash(page: PageName, params?: Record<string, string>): stri
 
 /** Rows can be skipped when they were sent meanwhile, or the address was already emailed from another file. */
 export function describeQueued(label: string, r: { queued: number; skipped: number }): string {
-  const skipped = r.skipped ? ` ${plural(r.skipped, 'recipient')} skipped (already emailed).` : '';
-  if (!r.queued) throw new Error(`Nothing was queued.${skipped}`);
-  return `${label}: ${plural(r.queued, 'email')} queued.${skipped}`;
+  const skipped = r.skipped ? ` ${plural(r.skipped, 'person')} ${r.skipped === 1 ? 'was' : 'were'} skipped because they were already emailed.` : '';
+  if (!r.queued) throw new Error(`Nothing was added to the queue.${skipped}`);
+  return `${label}. ${plural(r.queued, 'email')} added to the queue.${skipped}`;
 }
 
 /** What the send queue is doing, in words the dashboard shows everywhere. */
@@ -68,8 +68,8 @@ export function engineSummary(state: AppState, clock: number) {
   const remaining = counts.queued + (engine.sending ? 1 : 0);
   const label = live ? 'Sending' : paused ? 'Paused' : 'Idle';
   const tone: 'live' | 'warn' | 'idle' = live ? 'live' : paused ? 'warn' : 'idle';
-  let activity = 'Not started';
-  if (engine.sending) activity = 'Sending an email now…';
+  let activity = 'Not started yet';
+  if (engine.sending) activity = 'Sending an email right now';
   else if (engine.state === 'running' && engine.nextSendAt) {
     const s = Math.max(0, Math.round((engine.nextSendAt - clock) / 1000));
     activity = `Next email in ${s >= 3600 ? `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m` : s >= 60 ? `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s` : `${s}s`}`;

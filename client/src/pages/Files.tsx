@@ -12,10 +12,10 @@ export function FilesPage({ ctx }: { ctx: Ctx }) {
   const rescan = () =>
     run(async () => {
       const r = await api.reimport();
-      if (!r.files) return `No CSV files in ${r.folder}.`;
+      if (!r.files) return `There are no CSV files in ${r.folder}.`;
       const errors = r.errors.map((e) => `${e.filename}: ${e.error}`).join('; ');
       if (errors && !r.added && !r.updated) throw new Error(errors);
-      return `Rescanned ${plural(r.files, 'file')}: ${r.added} new, ${r.updated} updated, ${r.removed} removed.${errors ? ` Problems: ${errors}` : ''}`;
+      return `Checked ${plural(r.files, 'file')}: ${r.added} new, ${r.updated} updated, ${r.removed} removed.${errors ? ` Some rows had problems: ${errors}` : ''}`;
     });
 
   return (
@@ -32,11 +32,11 @@ export function FilesPage({ ctx }: { ctx: Ctx }) {
           <Icon name="upload" size={22} />
         </span>
         <span className="dropzone-text">
-          <strong>Drop a CSV here, or click to choose one</strong>
+          <strong>Drop a CSV here, or click to pick one</strong>
           <span>
-            Needs an <code>email</code> column; <code>name</code>, <code>location</code>, <code>subject</code> and{' '}
-            <code>content</code> are optional. Re-uploading a file with the same name updates it. Nothing is sent until you
-            start sending.
+            It needs an <code>email</code> column. <code>name</code>, <code>location</code>, <code>subject</code> and{' '}
+            <code>content</code> are optional. Uploading a file with the same name again updates it, and nothing goes out until you
+            press Start.
           </span>
         </span>
       </button>
